@@ -168,7 +168,6 @@ def cpu_apps():
     Button(frame, text="Volver", bg=BTN, fg=FG, command=menu).pack(pady=10)
 
 
-# INICIO
 
 menu()
 root.mainloop()
