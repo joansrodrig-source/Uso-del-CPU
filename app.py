@@ -1,173 +1,116 @@
 import psutil
+import tkinter as tk
+from tkinter import ttk
 import matplotlib.pyplot as plt
-from tkinter import *
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-# COLORES
-BG = "#0f0f0f"
-FG = "white"
-BTN = "#1f1f1f"
+# ======================
+# CONFIG VENTANA
+# ======================
+root = tk.Tk()
+root.title("CPU Monitor PRO")
+root.geometry("900x600")
 
+# ======================
+# ESTILO MODERNO
+# ======================
+style = ttk.Style()
+style.theme_use("clam")
 
-# VENTANA
+style.configure("TFrame", background="#1e1e1e")
+style.configure("TLabel", background="#1e1e1e", foreground="white")
+style.configure("TButton", background="#2d2d2d", foreground="white")
+style.configure("Treeview",
+                background="#2d2d2d",
+                foreground="white",
+                fieldbackground="#2d2d2d")
 
-root = Tk()
-root.title("Monitor CPU PRO")
-root.geometry("800x600")
-root.configure(bg=BG)
+# ======================
+# HEADER (ARRIBA)
+# ======================
+header = ttk.Frame(root)
+header.pack(fill="x")
 
-frame = Frame(root, bg=BG)
-frame.pack(fill="both", expand=True)
+ttk.Label(header, text="CPU MONITOR PRO", font=("Arial", 16)).pack(pady=10)
 
+# ======================
+# TABS (como administrador)
+# ======================
+notebook = ttk.Notebook(root)
+notebook.pack(fill="both", expand=True)
 
-# LIMPIAR
+# ======================
+# TAB 1: CPU GENERAL
+# ======================
+tab1 = ttk.Frame(notebook)
+notebook.add(tab1, text="CPU General")
 
-def limpiar():
-    for widget in frame.winfo_children():
-        widget.destroy()
-
-
-# MENÚ
-
-def menu():
-    limpiar()
-
-    Label(frame, text="MONITOR DE CPU", font=("Arial", 20), bg=BG, fg=FG).pack(pady=20)
-
-    Button(frame, text="CPU General", bg=BTN, fg=FG, width=20, command=cpu_general).pack(pady=10)
-    Button(frame, text="CPU por Aplicaciones", bg=BTN, fg=FG, width=20, command=cpu_apps).pack(pady=10)
-
-
-# CPU GENERAL
+fig1 = plt.Figure(figsize=(6,3))
+canvas1 = FigureCanvasTkAgg(fig1, master=tab1)
+canvas1.get_tk_widget().pack(fill="both", expand=True)
 
 valores_cpu = []
 
-def cpu_general():
-    limpiar()
+def actualizar_cpu():
+    cpu = psutil.cpu_percent(interval=1)
 
-    Label(frame, text="CPU EN TIEMPO REAL", font=("Arial", 14), bg=BG, fg=FG).pack()
+    valores_cpu.append(cpu)
+    if len(valores_cpu) > 30:
+        valores_cpu.pop(0)
 
-    fig = plt.Figure(figsize=(6,3), facecolor=BG)
-    canvas = FigureCanvasTkAgg(fig, master=frame)
-    canvas.get_tk_widget().pack()
+    fig1.clear()
+    ax = fig1.add_subplot(111)
+    ax.plot(valores_cpu)
+    ax.set_title("Uso de CPU (%)")
 
-    def actualizar():
-        cpu = psutil.cpu_percent(interval=1)
+    canvas1.draw()
+    root.after(1000, actualizar_cpu)
 
-        valores_cpu.append(cpu)
-        if len(valores_cpu) > 20:
-            valores_cpu.pop(0)
+actualizar_cpu()
 
-        fig.clear()
-        ax = fig.add_subplot(111)
-        ax.plot(valores_cpu)
+# ======================
+# TAB 2: PROCESOS
+# ======================
+tab2 = ttk.Frame(notebook)
+notebook.add(tab2, text="Aplicaciones")
 
-        ax.set_facecolor(BG)
-        ax.tick_params(colors=FG)
-        ax.set_title("CPU (%)", color=FG)
-        ax.grid()
+# TABLA (como administrador de tareas)
+tree = ttk.Treeview(tab2, columns=("PID", "Nombre", "CPU", "RAM"), show="headings")
+tree.heading("PID", text="PID")
+tree.heading("Nombre", text="Nombre")
+tree.heading("CPU", text="CPU (%)")
+tree.heading("RAM", text="RAM (MB)")
+tree.pack(fill="both", expand=True)
 
-        canvas.draw()
-        root.after(1000, actualizar)
+# ======================
+# ACTUALIZAR TABLA
+# ======================
+def actualizar_tabla():
+    for row in tree.get_children():
+        tree.delete(row)
 
-    actualizar()
+    procesos = []
 
-    Button(frame, text="Volver", bg=BTN, fg=FG, command=menu).pack(pady=10)
-
-
-# CPU POR APPS
-
-def cpu_apps():
-    limpiar()
-
-    Label(frame, text="APLICACIONES ACTIVAS", font=("Arial", 14), bg=BG, fg=FG).pack()
-
-    lista = Listbox(frame, width=60, bg=BTN, fg=FG)
-    lista.pack(pady=10)
-
-    fig = plt.Figure(figsize=(6,3), facecolor=BG)
-    canvas = FigureCanvasTkAgg(fig, master=frame)
-    canvas.get_tk_widget().pack()
-
-    proceso_actual = {"proc": None}
-    valores = []
-
-    
-    for p in psutil.process_iter():
+    for proc in psutil.process_iter(['pid', 'name', 'memory_info']):
         try:
-            p.cpu_percent(None)
+            cpu = proc.cpu_percent()
+            ram = proc.info['memory_info'].rss / (1024 * 1024)
+
+            if ram > 30:
+                procesos.append((proc.info['pid'], proc.info['name'], cpu, ram))
         except:
             pass
 
-    def actualizar_lista():
-        lista.delete(0, END)
+    procesos.sort(key=lambda x: x[3], reverse=True)
 
-        procesos = []
-        for proc in psutil.process_iter(['pid', 'name', 'memory_info']):
-            try:
-                ram = proc.info['memory_info'].rss / (1024 * 1024)
-                if ram > 50:
-                    procesos.append((proc, ram))
-            except:
-                pass
+    for p in procesos[:15]:
+        tree.insert("", "end", values=(p[0], p[1], f"{p[2]:.1f}", f"{p[3]:.0f}"))
 
-        procesos.sort(key=lambda x: x[1], reverse=True)
+    root.after(2000, actualizar_tabla)
 
-        for proc, ram in procesos[:10]:
-            lista.insert(END, f"{proc.info['name']} ({proc.pid}) → {ram:.0f}MB")
+actualizar_tabla()
 
-        root.after(3000, actualizar_lista)
-
-    def seleccionar(event):
-        if not lista.curselection():
-            return
-
-        index = lista.curselection()[0]
-        texto = lista.get(index)
-
-        pid = int(texto.split("(")[1].split(")")[0])
-
-        try:
-            proceso_actual["proc"] = psutil.Process(pid)
-            valores.clear()
-        except:
-            proceso_actual["proc"] = None
-
-    lista.bind("<<ListboxSelect>>", seleccionar)
-
-    def actualizar_grafica():
-        proc = proceso_actual["proc"]
-
-        if proc:
-            try:
-                cpu = proc.cpu_percent(interval=0.5)
-
-                valores.append(cpu)
-                if len(valores) > 20:
-                    valores.pop(0)
-
-                fig.clear()
-                ax = fig.add_subplot(111)
-                ax.plot(valores)
-
-                ax.set_facecolor(BG)
-                ax.tick_params(colors=FG)
-                ax.set_title(f"CPU: {proc.name()}", color=FG)
-                ax.grid()
-
-                canvas.draw()
-
-            except:
-                proceso_actual["proc"] = None
-
-        root.after(1000, actualizar_grafica)
-
-    actualizar_lista()
-    actualizar_grafica()
-
-    Button(frame, text="Volver", bg=BTN, fg=FG, command=menu).pack(pady=10)
-
-
-
-menu()
+# ======================
+# INICIAR APP
+# ======================
 root.mainloop()
