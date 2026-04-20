@@ -1,34 +1,57 @@
 import sys
 import psutil
+
 from PySide6.QtWidgets import *
-from PySide6.QtCore import QTimer, Qt, QPropertyAnimation
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import QTimer, Qt, QThread, Signal
+from PySide6.QtGui import QFont
+
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
+
+# ======================
+# THREAD CPU (ESTABLE)
+# ======================
+class CPUThread(QThread):
+    update_cpu = Signal(float)
+
+    def run(self):
+        # primera lectura "calienta psutil"
+        psutil.cpu_percent(interval=None)
+
+        while True:
+            cpu = psutil.cpu_percent(interval=1)
+            self.update_cpu.emit(cpu)
+
+
+# ======================
+# APP
+# ======================
 app = QApplication(sys.argv)
 
+
 # ======================
-# VENTANA
+# VENTANA PRINCIPAL
 # ======================
 window = QWidget()
-window.setWindowTitle("MonirtoCPU")
+window.setWindowTitle("MonirtoCPU Pro 🚀")
 window.resize(1100, 650)
 
-main_layout = QHBoxLayout()
+main_layout = QHBoxLayout(window)
+
 
 # ======================
-# MENU
+# MENU LATERAL
 # ======================
 menu = QVBoxLayout()
 
 btn_inicio = QPushButton("Inicio")
 btn_cpu = QPushButton("CPU")
-btn_apps = QPushButton("Aplicaciones")
+btn_apps = QPushButton("Procesos")
 btn_about = QPushButton("Acerca de")
 
 for b in [btn_inicio, btn_cpu, btn_apps, btn_about]:
-    b.setMinimumHeight(40)
+    b.setMinimumHeight(45)
     b.setCursor(Qt.PointingHandCursor)
     menu.addWidget(b)
 
@@ -36,257 +59,230 @@ menu.addStretch()
 
 menu_widget = QWidget()
 menu_widget.setLayout(menu)
-menu_widget.setFixedWidth(160)
+menu_widget.setFixedWidth(170)
+
 
 # ======================
-# STACK
+# STACK (PÁGINAS)
 # ======================
 stack = QStackedWidget()
 
-# ======================
-# ANIMACION
-# ======================
-def cambiar(index):
-    anim = QPropertyAnimation(stack, b"windowOpacity")
-    anim.setDuration(200)
-    anim.setStartValue(0.6)
-    anim.setEndValue(1)
-    anim.start()
-    stack.setCurrentIndex(index)
 
 # ======================
-# INICIO
+# 1. INICIO
 # ======================
 inicio = QWidget()
-inicio_layout = QVBoxLayout()
+inicio_layout = QVBoxLayout(inicio)
 
-titulo = QLabel("Panel de Monitoreo")
-titulo.setFont(QFont("Segoe UI", 16, QFont.Bold))
+label_cpu = QLabel("CPU: ...")
+label_cores = QLabel("Núcleos: ...")
+label_top = QLabel("Proceso más activo: ...")
 
-label_cpu = QLabel("CPU: 0%")
-label_nucleos = QLabel("Núcleos: 0")
-label_top = QLabel("App más activa: ...")
-label_rec = QLabel("Recomendación: ...")
+for l in [label_cpu, label_cores, label_top]:
+    l.setFont(QFont("Segoe UI", 12))
+    inicio_layout.addWidget(l)
 
-for lbl in [label_cpu, label_nucleos, label_top, label_rec]:
-    lbl.setFont(QFont("Segoe UI", 12))
-    inicio_layout.addWidget(lbl)
-
-inicio.setLayout(inicio_layout)
 stack.addWidget(inicio)
 
+
 # ======================
-# CPU
+# 2. CPU (GRÁFICA GLOBAL)
 # ======================
 cpu_tab = QWidget()
-cpu_layout = QVBoxLayout()
+cpu_layout = QVBoxLayout(cpu_tab)
 
 cpu_bar = QProgressBar()
-cpu_layout.addWidget(cpu_bar)
 
 fig_cpu = Figure()
 canvas_cpu = FigureCanvas(fig_cpu)
+
+cpu_layout.addWidget(cpu_bar)
 cpu_layout.addWidget(canvas_cpu)
 
-valores_cpu = []
+cpu_data = []
 
-def update_cpu():
-    cpu = psutil.cpu_percent(interval=None)
+
+def update_cpu_graph(cpu):
     cpu_bar.setValue(int(cpu))
 
-    valores_cpu.append(cpu)
-    if len(valores_cpu) > 30:
-        valores_cpu.pop(0)
+    cpu_data.append(cpu)
+    if len(cpu_data) > 40:
+        cpu_data.pop(0)
 
     fig_cpu.clear()
     ax = fig_cpu.add_subplot(111)
-    ax.plot(valores_cpu)
-    ax.set_title("CPU (%)")
+    ax.plot(cpu_data)
+    ax.set_title("Uso de CPU (%)")
+    ax.set_ylim(0, 100)
+
     canvas_cpu.draw()
 
-cpu_tab.setLayout(cpu_layout)
+
 stack.addWidget(cpu_tab)
 
+
 # ======================
-# APLICACIONES
+# 3. PROCESOS
 # ======================
 apps_tab = QWidget()
-apps_layout = QVBoxLayout()
+apps_layout = QVBoxLayout(apps_tab)
 
 table = QTableWidget()
 table.setColumnCount(4)
-table.setHorizontalHeaderLabels(["PID", "Nombre", "CPU", "RAM"])
+table.setHorizontalHeaderLabels(["PID", "Nombre", "CPU %", "RAM MB"])
 apps_layout.addWidget(table)
-
-btn_kill = QPushButton("Cerrar proceso")
-apps_layout.addWidget(btn_kill)
 
 fig_proc = Figure()
 canvas_proc = FigureCanvas(fig_proc)
 apps_layout.addWidget(canvas_proc)
 
-valores_proc = []
-proceso_actual = None
+proc_data = []
+current_proc = None
+
 
 def update_table():
     procesos = []
 
-    for p in psutil.process_iter(['pid','name','memory_info']):
+    for p in psutil.process_iter(['pid', 'name', 'memory_info']):
         try:
             cpu = p.cpu_percent(interval=None)
-            ram = p.info['memory_info'].rss / (1024*1024)
-
+            ram = p.info['memory_info'].rss / 1024 / 1024
             procesos.append((p.pid, p.info['name'], cpu, ram))
         except:
             pass
 
     procesos.sort(key=lambda x: x[2], reverse=True)
+    procesos = procesos[:10]
 
-    table.setRowCount(len(procesos[:15]))
+    table.setRowCount(len(procesos))
 
-    for i, p in enumerate(procesos[:15]):
-        table.setItem(i,0,QTableWidgetItem(str(p[0])))
-        table.setItem(i,1,QTableWidgetItem(p[1]))
-        table.setItem(i,2,QTableWidgetItem(f"{p[2]:.1f}"))
-        table.setItem(i,3,QTableWidgetItem(f"{p[3]:.0f}"))
+    for i, p in enumerate(procesos):
+        table.setItem(i, 0, QTableWidgetItem(str(p[0])))
+        table.setItem(i, 1, QTableWidgetItem(str(p[1])))
+        table.setItem(i, 2, QTableWidgetItem(f"{p[2]:.1f}"))
+        table.setItem(i, 3, QTableWidgetItem(f"{p[3]:.1f}"))
 
-def seleccionar():
-    global proceso_actual
+
+def select_process():
+    global current_proc
     row = table.currentRow()
+
     if row < 0:
         return
 
-    pid = int(table.item(row,0).text())
+    pid = int(table.item(row, 0).text())
 
     try:
-        proceso_actual = psutil.Process(pid)
-        valores_proc.clear()
+        current_proc = psutil.Process(pid)
+        proc_data.clear()
     except:
-        proceso_actual = None
+        current_proc = None
 
-table.clicked.connect(seleccionar)
 
-def update_proc():
-    global proceso_actual
+table.clicked.connect(select_process)
 
-    if proceso_actual:
+
+def update_process_graph():
+    global current_proc
+
+    if current_proc:
         try:
-            cpu = proceso_actual.cpu_percent(interval=None)
+            cpu = current_proc.cpu_percent(interval=None)
 
-            valores_proc.append(cpu)
-            if len(valores_proc) > 30:
-                valores_proc.pop(0)
+            proc_data.append(cpu)
+            if len(proc_data) > 40:
+                proc_data.pop(0)
 
             fig_proc.clear()
             ax = fig_proc.add_subplot(111)
-            ax.plot(valores_proc)
-            ax.set_title(proceso_actual.name())
+            ax.plot(proc_data)
+            ax.set_title(f"{current_proc.name()} CPU")
+            ax.set_ylim(0, 100)
+
             canvas_proc.draw()
+
         except:
-            proceso_actual = None
+            current_proc = None
 
-def kill_process():
-    row = table.currentRow()
-    if row < 0:
-        return
 
-    pid = int(table.item(row,0).text())
-    try:
-        psutil.Process(pid).terminate()
-    except:
-        pass
-
-btn_kill.clicked.connect(kill_process)
-
-apps_tab.setLayout(apps_layout)
 stack.addWidget(apps_tab)
 
+
 # ======================
-# ABOUT
+# 4. ABOUT
 # ======================
 about = QWidget()
-about_layout = QVBoxLayout()
+about_layout = QVBoxLayout(about)
 
-about_layout.addWidget(QLabel("MonirtoCPU"))
+about_layout.addWidget(QLabel("MonirtoCPU Pro"))
 about_layout.addWidget(QLabel("Proyecto universitario"))
-about_layout.addWidget(QLabel("Creadores:\nJoan Rodriguez\nJuan Roa\nJuan Torres"))
+about_layout.addWidget(QLabel("Joan Rodriguez"))
 
-about.setLayout(about_layout)
 stack.addWidget(about)
+
 
 # ======================
 # INICIO UPDATE
 # ======================
 def update_inicio():
     cpu = psutil.cpu_percent(interval=None)
-    nucleos = psutil.cpu_count()
 
     label_cpu.setText(f"CPU: {cpu}%")
-    label_nucleos.setText(f"Núcleos: {nucleos}")
+    label_cores.setText(f"Núcleos: {psutil.cpu_count()}")
 
-    procesos = []
+    top = ("-", 0)
+
     for p in psutil.process_iter(['name']):
         try:
-            uso = p.cpu_percent(interval=None)
-            procesos.append((p.info['name'], uso))
+            cpu_p = p.cpu_percent(interval=None)
+            if cpu_p > top[1]:
+                top = (p.info['name'], cpu_p)
         except:
             pass
 
-    if procesos:
-        top = max(procesos, key=lambda x: x[1])
-        label_top.setText(f"App más activa: {top[0]} ({top[1]}%)")
+    label_top.setText(f"Proceso más activo: {top[0]} ({top[1]:.1f}%)")
 
-    if cpu > 80:
-        label_rec.setText("Alto uso de CPU")
-    else:
-        label_rec.setText("Sistema estable")
 
 # ======================
 # BOTONES
 # ======================
-btn_inicio.clicked.connect(lambda: cambiar(0))
-btn_cpu.clicked.connect(lambda: cambiar(1))
-btn_apps.clicked.connect(lambda: cambiar(2))
-btn_about.clicked.connect(lambda: cambiar(3))
+btn_inicio.clicked.connect(lambda: stack.setCurrentIndex(0))
+btn_cpu.clicked.connect(lambda: stack.setCurrentIndex(1))
+btn_apps.clicked.connect(lambda: stack.setCurrentIndex(2))
+btn_about.clicked.connect(lambda: stack.setCurrentIndex(3))
+
 
 # ======================
-# CALENTAR PSUTIL (CLAVE)
+# THREAD CPU
 # ======================
-for p in psutil.process_iter():
-    try:
-        p.cpu_percent(None)
-    except:
-        pass
+thread = CPUThread()
+thread.update_cpu.connect(update_cpu_graph)
+thread.start()
 
-psutil.cpu_percent(None)
 
 # ======================
-# TIMERS
+# TIMERS (SIN CONGELAR)
 # ======================
-QTimer(interval=1000, timeout=update_cpu).start()
-QTimer(interval=2000, timeout=update_table).start()
-QTimer(interval=1000, timeout=update_proc).start()
-QTimer(interval=2000, timeout=update_inicio).start()
+QTimer().singleShot(1000, update_inicio)
+timer_inicio = QTimer()
+timer_inicio.timeout.connect(update_inicio)
+timer_inicio.start(2000)
+
+timer_table = QTimer()
+timer_table.timeout.connect(update_table)
+timer_table.start(3000)
+
+timer_proc = QTimer()
+timer_proc.timeout.connect(update_process_graph)
+timer_proc.start(1000)
+
 
 # ======================
-# ESTILO
-# ======================
-app.setStyleSheet("""
-QWidget {background:#1e1e1e;color:white;font-family:Segoe UI;}
-QPushButton {background:#2b2b2b;border-radius:6px;padding:8px;}
-QPushButton:hover {background:#3a3a3a;}
-QProgressBar {background:#2b2b2b;}
-QProgressBar::chunk {background:#0078D7;}
-QTableWidget {background:#2b2b2b;}
-""")
-
-# ======================
-# FINAL
+# UI FINAL
 # ======================
 main_layout.addWidget(menu_widget)
 main_layout.addWidget(stack)
 
-window.setLayout(main_layout)
 window.show()
 
 sys.exit(app.exec())
